@@ -71,7 +71,7 @@ The robots use **ESP-NOW**, which lets ESP32 boards message each other directly 
 
 All the mechanical parts are 3D printed in PLA. Each robot is about 10 × 10 cm.
 
-The chassis is based on the open-source [Pancake ESP32 Robot](https://grabcad.com/library/pancake-esp32-robot-for-mapping-and-slam-1) design from GrabCAD, shared for non-commercial use. We modified it for our build: straight motor mounts, AS5600 encoder mounts, standard M2 screw holes, and a reshaped internal edge to protect the wiring.
+The chassis is based on [Pancake ESP32 Robot](https://grabcad.com/library/pancake-esp32-robot-for-mapping-and-slam-1) design from GrabCAD. We modified it for our build: straight motor mounts, AS5600 encoder mounts, standard M2 screw holes, and a reshaped internal edge to protect the wiring.
 
 - **Brain:** ESP32 LOLIN D32
 - **Motors:** N20 metal gear motors (3 V, 60 RPM)
