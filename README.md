@@ -9,7 +9,6 @@ This was my graduation project at Sultan Qaboos University (2026), built as a tw
 
 https://github.com/user-attachments/assets/da3cd984-d966-41d4-9e37-92a87bac95dd
 
-
 <p align="center">
   <img src="docs/demo.gif" alt="Three robots forming a triangle" width="600">
 </p>
@@ -41,29 +40,41 @@ flowchart LR
 ```
 
 ### 1. Keeping the shape: distance-based control
-Instead of giving each robot a fixed spot on the floor, we only tell it how far it should be from each neighbor. The robot pushes or pulls itself to fix any distance that's off:
+Instead of giving each robot a fixed spot on the floor, we only tell it how far it should be from each neighbor. The robot moves along each link to shrink whatever distance error it sees:
 
-$$u_i = k_p \sum_{j \in \mathcal{N}_i} \left( \lVert p_j - p_i \rVert^2 - d_{ij}^2 \right)(p_j - p_i)$$
+$$u_i = k_p \sum_{j \in \mathcal{N}_i} \left( \lVert p_j - p_i \rVert - d_{ij} \right)\frac{p_j - p_i}{\lVert p_j - p_i \rVert}$$
+
+In practice the corrections are averaged over the active links, and there's a 4 mm deadband so the robots settle down instead of jittering around the target.
 
 The nice part is that the formation can end up anywhere and in any orientation. Only the shape matters.
 
 We picked this approach after comparing it with position-based control (needs a global map) and displacement-based control (all robots must agree on the same "north").
 
-### 2. Making sure the shape can't bend
+### 2. Turning that into wheel commands
+The control law gives a direction to move in, but a two-wheeled robot can't slide sideways. So we control a point 5 cm in front of the wheel axle instead of the axle itself. That point *can* move in any direction, and it gives a clean mapping to forward speed and turn rate:
+
+$$v = u_x\cos\theta + u_y\sin\theta, \qquad \omega = k_\omega\,\frac{-u_x\sin\theta + u_y\cos\theta}{L}$$
+
+Then $v$ and $\omega$ are split into left and right wheel speeds ($v \mp \tfrac{W}{2}\omega$), with acceleration limits so the robots start and stop smoothly.
+
+### 3. Making sure the shape can't bend
 A square with only four sides can squish into a diamond while keeping every side length the same. To prevent that, the graph has to be **rigid**. In 2D, a group of `n` robots needs at least `2n − 3` links. For three robots that's 3 links, which is exactly a triangle where everyone talks to everyone.
 
-### 3. Knowing where each robot is
+### 4. Knowing where each robot is
 There's no GPS or camera. Each robot tracks itself by counting wheel rotations (odometry):
 
 $$\Delta s = \frac{\Delta s_L + \Delta s_R}{2}, \qquad x \mathrel{+}= \Delta s \cos\theta, \qquad y \mathrel{+}= \Delta s \sin\theta$$
 
-The tricky part is the heading angle θ. Encoders drift when wheels slip, and the IMU is noisy, so we fused both with a **Kalman filter** (Q = 0.0001, R = 0.01) to get a heading that's smoother than either sensor alone.
+The tricky part is the heading angle θ. Encoders drift when wheels slip, and the IMU is noisy, so we fused both with a **Kalman filter** (Q = 0.0001, R = 0.01): the encoder turn rate drives the prediction, and the IMU angle corrects it. The result is smoother than either sensor alone. (One catch: the MPU6050 has no magnetometer, so its angle is also integrated from the gyro. Fusion reduces noise, but slow drift is still there.)
 
-### 4. Driving the wheels
-Each wheel has its own PID speed loop (Kp = 9.25, Ki = 1.0, Kd = 0.33, tuned by hand on the real robot). The encoder speed signal was noisy, so we smoothed it with a simple complementary filter (α = 0.94) before feeding it to the PID.
+### 5. Driving the wheels
+Each wheel has its own PID speed loop (Kp = 9.25, Ki = 1.0, Kd = 0.33, tuned by hand on the real robot). The encoder speed signal was noisy, so we smoothed it with a first-order low-pass filter (τ = 80 ms) before feeding it to the PID. The N20 gearboxes won't move below a certain PWM, so small commands get bumped up to a minimum duty cycle to beat static friction.
 
-### 5. Talking to each other
-The robots use **ESP-NOW**, which lets ESP32 boards message each other directly without a Wi-Fi router. Each robot broadcasts its position, and its neighbors use it in their controllers.
+### 6. Talking to each other
+The robots use **ESP-NOW**, which lets ESP32 boards message each other directly without a Wi-Fi router. Each robot sends its position 20 times a second, and only to its neighbors in the graph.
+
+### 7. Running it all at once
+The firmware runs on **FreeRTOS** with separate tasks for sensing (100 Hz), control (100 Hz), and communication (20 Hz), with mutexes protecting the shared data. There's also a safety rule: if a robot stops hearing from any of its neighbors for a second, or its own sensor data goes stale, it stops moving.
 
 ---
 
@@ -71,14 +82,15 @@ The robots use **ESP-NOW**, which lets ESP32 boards message each other directly 
 
 All the mechanical parts are 3D printed in PLA. Each robot is about 10 × 10 cm.
 
-The chassis is based on [Pancake ESP32 Robot](https://grabcad.com/library/pancake-esp32-robot-for-mapping-and-slam-1) design from GrabCAD. We modified it for our build: straight motor mounts, AS5600 encoder mounts, standard M2 screw holes, and a reshaped internal edge to protect the wiring.
+The chassis is based on the open-source [Pancake ESP32 Robot](https://grabcad.com/library/pancake-esp32-robot-for-mapping-and-slam-1) design from GrabCAD, shared for non-commercial use. We modified it for our build: straight motor mounts, AS5600 encoder mounts, standard M2 screw holes, and a reshaped internal edge to protect the wiring.
 
 - **Brain:** ESP32 LOLIN D32
 - **Motors:** N20 metal gear motors (3 V, 60 RPM)
-- **Encoders:** AS5600 magnetic encoders, with the magnet embedded in the wheel hub
+- **Encoders:** AS5600 magnetic encoders, with the magnet embedded in the wheel hub. Both have the same fixed I²C address, so each one sits on its own I²C bus.
 - **IMU:** MPU6050
 - **Motor driver:** DRV8833
 - **Power:** single 3.7 V 1500 mAh Li-ion cell
+- **Wheel base:** 70 mm, wheel diameter 34 mm
 
 Five robots cost about **84 OMR** in total.
 
@@ -112,6 +124,7 @@ Yes, with three robots. They started at (0, 60), (0, −60), and (60, 0) cm and 
 ## 🤔 What We'd Do Differently
 
 - **Stop relying on odometry.** Wheel counting drifts over time, and that's where most of the error came from. Next time we'd measure distances between robots directly, with UWB ranging or a camera.
+- **Handle a lost neighbor gracefully.** Right now a robot freezes if any neighbor goes silent. That's safe, but it isn't really fault-tolerant.
 - **Get 4 and 5 robots working.** Two of the robots had hardware problems we couldn't fix before the deadline, so the bigger formations never got tested.
 - **Tune the PID properly** with system identification and step-response data instead of trial and error.
 - Add obstacle avoidance and try more shapes: squares, V-formations, convoys.
@@ -121,13 +134,11 @@ Yes, with three robots. They started at (0, 60), (0, −60), and (60, 0) cm and 
 ## 📁 What's in This Repo
 
 ```
-firmware/     ESP32 code
+firmware/     ESP32 code (see firmware/README.md)
 simulation/   MATLAB and CoppeliaSim files
 cad/          STL files and drawings
 docs/         Photos, videos, and poster
 ```
-
-## 🙌 Credits
 
 - Chassis base design: [Pancake ESP32 Robot for Mapping and SLAM](https://grabcad.com/library/pancake-esp32-robot-for-mapping-and-slam-1) on GrabCAD 
 - Battery holder based on: "Chargeur TP4056 - Pour batteries 16340" by Makoto_Doushite on Thingiverse (thing:3591502)
